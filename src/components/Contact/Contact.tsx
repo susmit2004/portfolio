@@ -1,23 +1,33 @@
 import { useState, useEffect, useRef } from 'react';
 import { gsap } from 'gsap';
+import emailjs from '@emailjs/browser';
 import { 
   Mail, Phone, MapPin, Send, 
   Linkedin, Github, Instagram, FileText,
   MessageCircle, CheckCircle, AlertCircle, Calendar, User
 } from 'lucide-react';
+import { 
+  EMAILJS_CONFIG, 
+  WHATSAPP_CONFIG,
+  CONTACT_EMAIL,
+  sanitizeInput,
+  isValidEmail,
+  isValidPhone,
+  formatWhatsAppMessage
+} from '../../utils/emailjs';
 
 const contactInfo = [
   {
     icon: Phone,
     title: 'Phone',
-    value: '+91 93073 66418',
-    link: 'tel:+919307366418'
+    value: WHATSAPP_CONFIG.PHONE_NUMBER,
+    link: `tel:${WHATSAPP_CONFIG.PHONE_NUMBER.replace(/\D/g, '')}`
   },
   {
     icon: Mail,
     title: 'Email',
-    value: 'susmitnaik14@gmail.com',
-    link: 'mailto:susmitnaik14@gmail.com'
+    value: CONTACT_EMAIL,
+    link: `mailto:${CONTACT_EMAIL}`
   },
   {
     icon: MapPin,
@@ -55,7 +65,7 @@ const socialLinks = [
   {
     icon: MessageCircle,
     name: 'WhatsApp',
-    url: 'https://wa.me/919307366418',
+    url: `https://wa.me/${WHATSAPP_CONFIG.PHONE_NUMBER.replace(/\D/g, '')}`,
     color: 'from-green-500 to-emerald-600'
   },
   {
@@ -69,6 +79,7 @@ const socialLinks = [
 type FormData = {
   name: string;
   email: string;
+  phone: string;
   subject: string;
   message: string;
 };
@@ -81,6 +92,7 @@ export default function Contact() {
   const [formData, setFormData] = useState<FormData>({
     name: '',
     email: '',
+    phone: '',
     subject: '',
     message: ''
   });
@@ -145,21 +157,31 @@ export default function Contact() {
   const validateForm = (): boolean => {
     const newErrors: FormErrors = {};
     
-    if (!formData.name.trim()) {
+    // Validate and sanitize name
+    const sanitizedName = sanitizeInput(formData.name);
+    if (!sanitizedName) {
       newErrors.name = 'Name is required';
     }
     
-    if (!formData.email.trim()) {
+    // Validate and sanitize email
+    const sanitizedEmail = sanitizeInput(formData.email);
+    if (!sanitizedEmail) {
       newErrors.email = 'Email is required';
-    } else if (!/\S+@\S+\.\S+/.test(formData.email)) {
+    } else if (!isValidEmail(sanitizedEmail)) {
       newErrors.email = 'Email is invalid';
     }
     
-    if (!formData.subject.trim()) {
-      newErrors.subject = 'Subject is required';
+    // Validate phone (optional but if provided must be valid)
+    const sanitizedPhone = sanitizeInput(formData.phone);
+    if (sanitizedPhone && !isValidPhone(sanitizedPhone)) {
+      newErrors.phone = 'Please enter a valid phone number';
     }
     
-    if (!formData.message.trim()) {
+    // Subject is optional - no validation needed
+    
+    // Validate and sanitize message
+    const sanitizedMessage = sanitizeInput(formData.message);
+    if (!sanitizedMessage) {
       newErrors.message = 'Message is required';
     }
     
@@ -176,22 +198,61 @@ export default function Contact() {
     
     setIsSubmitting(true);
     
-    // Simulate API call
+    // Prepare WhatsApp URL (always opens)
+    const whatsappUrl = `https://wa.me/${WHATSAPP_CONFIG.PHONE_NUMBER.replace(/\D/g, '')}?text=${formatWhatsAppMessage(
+      sanitizeInput(formData.name),
+      sanitizeInput(formData.email),
+      sanitizeInput(formData.phone),
+      sanitizeInput(formData.subject),
+      sanitizeInput(formData.message)
+    )}`;
+    
+    // Prepare mailto link as backup (always works)
+    const mailtoLink = `mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent(sanitizeInput(formData.subject) || 'Portfolio Contact')}&body=${encodeURIComponent(
+      `Name: ${sanitizeInput(formData.name)}\nEmail: ${sanitizeInput(formData.email)}\nPhone: ${sanitizeInput(formData.phone) || 'Not provided'}\n\nMessage:\n${sanitizeInput(formData.message)}`
+    )}`;
+    
+    try {
+      // Try to send email via EmailJS
+      const templateParams = {
+        from_name: sanitizeInput(formData.name),
+        from_email: sanitizeInput(formData.email),
+        phone: sanitizeInput(formData.phone) || 'Not provided',
+        subject: sanitizeInput(formData.subject) || 'Not provided',
+        message: sanitizeInput(formData.message),
+      };
+
+      await emailjs.send(
+        EMAILJS_CONFIG.SERVICE_ID,
+        EMAILJS_CONFIG.TEMPLATE_ID,
+        templateParams,
+        EMAILJS_CONFIG.PUBLIC_KEY
+      );
+    } catch (error) {
+      console.log('EmailJS failed, using fallback: mailto link');
+    }
+    
+    // Open WhatsApp with pre-filled message
+    window.open(whatsappUrl, '_blank');
+    
+    // Also open email client as backup
+    window.location.href = mailtoLink;
+
+    console.log('Form submitted:', formData);
+    setIsSubmitted(true);
+    
     setTimeout(() => {
-      console.log('Form submitted:', formData);
-      setIsSubmitting(false);
-      setIsSubmitted(true);
-      
-      setTimeout(() => {
-        setIsSubmitted(false);
-        setFormData({
-          name: '',
-          email: '',
-          subject: '',
-          message: ''
-        });
-      }, 3000);
-    }, 1500);
+      setIsSubmitted(false);
+      setFormData({
+        name: '',
+        email: '',
+        phone: '',
+        subject: '',
+        message: ''
+      });
+    }, 3000);
+    
+    setIsSubmitting(false);
   };
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
@@ -309,8 +370,35 @@ export default function Contact() {
                       </div>
 
                       <div className="space-y-2">
+                        <label htmlFor="phone" className="block text-sm font-medium text-gray-300">
+                          Phone Number <span className="text-gray-500">(Optional)</span>
+                        </label>
+                        <div className="relative">
+                          <input
+                            type="tel"
+                            id="phone"
+                            name="phone"
+                            value={formData.phone}
+                            onChange={handleChange}
+                            className={`w-full px-4 py-3 bg-background/50 border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all duration-300 ${
+                              errors.phone ? 'border-red-500' : 'border-gray-700'
+                            }`}
+                            placeholder="Enter your phone number"
+                          />
+                          {errors.phone && (
+                            <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
+                              <AlertCircle className="w-5 h-5 text-red-500" />
+                            </div>
+                          )}
+                        </div>
+                        {errors.phone && (
+                          <p className="text-red-500 text-sm">{errors.phone}</p>
+                        )}
+                      </div>
+
+                      <div className="space-y-2">
                         <label htmlFor="subject" className="block text-sm font-medium text-gray-300">
-                          Subject *
+                          Subject <span className="text-gray-500">(Optional)</span>
                         </label>
                         <div className="relative">
                           <input
